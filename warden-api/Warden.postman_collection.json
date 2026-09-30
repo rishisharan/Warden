@@ -1,0 +1,108 @@
+{
+  "info": {
+    "name": "Warden",
+    "description": "Permission-aware knowledge retrieval - Java API + Python retrieval service.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "warden_base", "value": "http://localhost:8082" },
+    { "key": "retrieval_base", "value": "http://localhost:8011" }
+  ],
+  "item": [
+    {
+      "name": "1. List fake users (Java)",
+      "request": {
+        "method": "GET",
+        "url": "{{warden_base}}/api/users"
+      }
+    },
+    {
+      "name": "2. Query as User A (support rep - public only)",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "url": "{{warden_base}}/api/query",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"userId\": \"user-a\",\n  \"question\": \"What discount can we offer Northfield Analytics to keep them from churning?\"\n}"
+        }
+      }
+    },
+    {
+      "name": "3. Query as User B (manager - full clearance)",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "url": "{{warden_base}}/api/query",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"userId\": \"user-b\",\n  \"question\": \"What discount can we offer Northfield Analytics to keep them from churning?\"\n}"
+        }
+      }
+    },
+    {
+      "name": "4. Query - public FAQ (both users should answer the same)",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "url": "{{warden_base}}/api/query",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"userId\": \"user-a\",\n  \"question\": \"How do I reset my password?\"\n}"
+        }
+      }
+    },
+    {
+      "name": "5. Query unknown user (expect 404)",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "url": "{{warden_base}}/api/query",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"userId\": \"user-z\",\n  \"question\": \"anything\"\n}"
+        }
+      }
+    },
+    {
+      "name": "6. Raw retrieval search (Python, bypasses Ollama chat)",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "url": "{{retrieval_base}}/search",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"question\": \"What discount can we offer Northfield Analytics?\",\n  \"allowedAccessLevels\": [\"public\", \"manager\"],\n  \"topK\": 5\n}"
+        }
+      }
+    },
+    {
+      "name": "7. Upload document (Java, multipart - what the UI calls)",
+      "request": {
+        "method": "POST",
+        "url": "{{warden_base}}/api/documents",
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            { "key": "file", "type": "file", "src": [] },
+            { "key": "accessLevel", "type": "text", "value": "manager" }
+          ]
+        }
+      }
+    },
+    {
+      "name": "8. Upload document - bad access level (expect 400)",
+      "request": {
+        "method": "POST",
+        "url": "{{warden_base}}/api/documents",
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            { "key": "file", "type": "file", "src": [] },
+            { "key": "accessLevel", "type": "text", "value": "root" }
+          ]
+        }
+      }
+    }
+  ]
+}
