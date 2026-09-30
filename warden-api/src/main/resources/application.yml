@@ -1,0 +1,32 @@
+server:
+  port: 8082
+
+spring:
+  application:
+    name: warden-api
+  servlet:
+    multipart:
+      max-file-size: 2MB
+      max-request-size: 2MB
+
+logging:
+  level:
+    com.warden: INFO
+  pattern:
+    # %X{traceId} pulls the per-request id TraceIdFilter puts in MDC, so every
+    # log line for a request - not just QueryService's summary line - is tagged.
+    console: "%d{HH:mm:ss.SSS} %-5level [traceId=%X{traceId:-}] %logger{36} - %msg%n"
+
+app:
+  warden:
+    top-k: 1
+    # The Python service that owns the Chroma vector store - see
+    # python-retrieval/retrieval_service.py. Java never talks to Chroma
+    # directly; it sends the question text plus the caller's allowed
+    # access levels and gets back only chunks already filtered to those
+    # levels.
+    retrieval-base-url: ${WARDEN_RETRIEVAL_BASE_URL:http://localhost:8011}
+
+  ollama:
+    base-url: ${OLLAMA_BASE_URL:http://localhost:11434}
+    chat-model: ${OLLAMA_CHAT_MODEL:llama3.2}
