@@ -62,7 +62,9 @@ public class RetrievalService {
                         String.valueOf(row.get("sourceType")),
                         String.valueOf(row.get("accessLevel")),
                         String.valueOf(row.get("content")),
-                        ((Number) row.get("distance")).doubleValue()
+                        row.get("distance") instanceof Number number
+                        ? number.doubleValue()
+                        : Double.NaN                        
                 ))
                 .toList();
     }

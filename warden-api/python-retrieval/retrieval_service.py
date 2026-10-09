@@ -28,10 +28,14 @@ from langchain_community.vectorstores import Chroma
 from langchain_openai import OpenAIEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
+import re
+from collections import defaultdict
+from rank_bm25 import BM25Okapi
+
 # Same .env ingestion.py reads (OPENAI_API_KEY), so this service doesn't
 # need its own copy of the key.
-GROUND_DIR = Path(r"E:\Forward deployment engineer\Warden\data\ground")
-load_dotenv(dotenv_path=GROUND_DIR / ".env")
+GROUND_DIR = Path(r"E:\Forward deployment engineer\Warden\data\ingestion-pipeline")
+load_dotenv(dotenv_path=GROUND_DIR / ".env", override=True)
 
 ROOT = Path(r"E:\Forward deployment engineer\Warden\data")
 PERSIST_DIR = str(ROOT / "chroma_store")
@@ -62,12 +66,48 @@ splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=100)
 app = Flask(__name__)
 
 
+def tokenize(text):
+    """Simple tokenization for BM25."""
+    return re.findall(r"\b\w+\b", text.lower())
+
+
+def reciprocal_rank_fusion(dense_results, bm25_results, k=60):
+    """Combine two ranked result lists using RRF."""
+    scores = defaultdict(float)
+    documents = {}
+
+    for results in [dense_results, bm25_results]:
+        for rank, item in enumerate(results, start=1):
+            doc_id = item["id"]
+            scores[doc_id] += 1.0 / (k + rank)
+            documents[doc_id] = item
+
+    ranked_ids = sorted(
+        scores,
+        key=lambda doc_id: scores[doc_id],
+        reverse=True
+    )
+
+    return [
+        {**documents[doc_id], "rrfScore": scores[doc_id]}
+        for doc_id in ranked_ids
+    ]
+
+
 @app.post("/search")
 def search():
     body = request.get_json(force=True)
     question = body["question"]
     allowed_levels = body.get("allowedAccessLevels", [])
-    top_k = body.get("topK", 5)
+    top_k = max(1, min(int(body.get("topK", 5)), 50))
+
+    # IMPORTANT:
+    # Only a trusted, authenticated service should supply
+    # allowedAccessLevels. Do not expose this endpoint publicly.
+    allowed_levels = [
+        level for level in allowed_levels
+        if level in ("public", "manager")
+    ]
 
     if not allowed_levels:
         return jsonify({"results": []})
@@ -87,26 +127,133 @@ def search():
     print("Allowed levels:", allowed_levels)
     print("Chroma filter:", access_filter)
 
-    combined = []
+    # Fetch more candidates than we ultimately return.
+    candidate_k = max(30, top_k * 5)
+
+    dense_results = []
+    bm25_documents = []
+
     for source_type, store in vector_stores.items():
+
+        # -----------------------------------------
+        # 1. DENSE RETRIEVAL (existing Chroma search)
+        # -----------------------------------------
         hits = store.similarity_search_with_score(
             question,
-            k=top_k,
-            filter=access_filter,
+            k=candidate_k,
+            filter=access_filter
         )
-        for i, (doc, distance) in enumerate(hits):
-            combined.append({
-                "id": f"{source_type}::{doc.metadata.get('source')}::{i}",
-                "sourceFile": doc.metadata.get("source"),
+
+        for doc, distance in hits:
+            # Chroma's document ID is preferable to a
+            # source filename because files can have
+            # multiple chunks.
+            content = doc.page_content
+            source_file = doc.metadata.get("source")
+
+            doc_id = f"{source_type}::{source_file}::{content}"
+
+            dense_results.append({
+                "id": doc_id,
+                "sourceFile": source_file,
                 "sourceType": source_type,
                 "accessLevel": doc.metadata.get("access_level"),
-                "content": doc.page_content,
-                "distance": distance,
+                "content": content,
+                "distance": float(distance)
             })
 
-    # lower distance = more similar; merge across collections then trim
-    combined.sort(key=lambda r: r["distance"])
-    return jsonify({"results": combined[:top_k]})
+        # -----------------------------------------
+        # 2. LOAD AUTHORIZED CHUNKS FOR BM25
+        # -----------------------------------------
+        collection_data = store._collection.get(
+            where=access_filter,
+            include=["documents", "metadatas"]
+        )
+
+        for content, metadata in zip(
+            collection_data["documents"],
+            collection_data["metadatas"]
+        ):
+            source_file = metadata.get("source")
+
+            bm25_documents.append({
+                "id": f"{source_type}::{source_file}::{content}",
+                "sourceFile": source_file,
+                "sourceType": source_type,
+                "accessLevel": metadata.get("access_level"),
+                "content": content,
+                "distance": None
+            })
+
+    # -----------------------------------------
+    # 3. RANK DENSE RESULTS
+    # -----------------------------------------
+    dense_results.sort(
+        key=lambda item: item["distance"]
+    )
+    dense_results = dense_results[:candidate_k]
+
+    # -----------------------------------------
+    # 4. BM25 KEYWORD RETRIEVAL
+    # -----------------------------------------
+    bm25_results = []
+
+    if bm25_documents:
+        tokenized_corpus = [
+            tokenize(item["content"])
+            for item in bm25_documents
+        ]
+
+        bm25 = BM25Okapi(tokenized_corpus)
+
+        query_tokens = tokenize(question)
+        bm25_scores = bm25.get_scores(query_tokens)
+
+        ranked_indices = sorted(
+            range(len(bm25_documents)),
+            key=lambda i: bm25_scores[i],
+            reverse=True
+        )
+
+        bm25_results = [
+            bm25_documents[i]
+            for i in ranked_indices
+            if bm25_scores[i] > 0
+        ][:candidate_k]
+
+    # -----------------------------------------
+    # 5. RECIPROCAL RANK FUSION
+    # -----------------------------------------
+    combined = reciprocal_rank_fusion(
+        dense_results,
+        bm25_results,
+        k=60
+    )
+
+    # -----------------------------------------
+    # 6. RETURN TOP K
+    # -----------------------------------------
+    results = []
+
+    for item in combined[:top_k]:
+        
+        results.append({
+            "id": item["id"],
+            "sourceFile": item["sourceFile"],
+            "sourceType": item["sourceType"],
+            "accessLevel": item["accessLevel"],
+            "content": item["content"],
+            "distance": item["distance"],
+            "rrfScore": item["rrfScore"]
+        })
+
+    print("Dense candidates:", len(dense_results))
+    print("BM25 candidates:", len(bm25_results))
+    print("Hybrid results:", [
+        r["sourceFile"] for r in results
+    ])
+
+    return jsonify({"results": results})
 
 
 @app.post("/ingest")
