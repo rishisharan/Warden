@@ -24,9 +24,8 @@ import os
 from pathlib import Path
 from dotenv import load_dotenv
 from flask import Flask, request, jsonify
-from langchain_community.vectorstores import Chroma
-from langchain_openai import OpenAIEmbeddings
-from langchain_text_splitters import RecursiveCharacterTextSplitter
+import hashlib
+import json
 
 import re
 from collections import defaultdict
@@ -35,9 +34,9 @@ from rank_bm25 import BM25Okapi
 # Same .env ingestion.py reads (OPENAI_API_KEY), so this service doesn't
 # need its own copy of the key.
 GROUND_DIR = Path(r"E:\Forward deployment engineer\Warden\data\ingestion-pipeline")
-load_dotenv(dotenv_path=GROUND_DIR / ".env", override=True)
+load_dotenv(dotenv_path=os.getenv("WARDEN_ENV_FILE", str(GROUND_DIR / ".env")), override=True)
 
-ROOT = Path(r"E:\Forward deployment engineer\Warden\data")
+ROOT = Path(os.getenv("WARDEN_DATA_DIR", r"E:\Forward deployment engineer\Warden\data"))
 PERSIST_DIR = str(ROOT / "chroma_store")
 COLLECTION_NAMES = ["policy_docs", "slack_messages", "support_tickets"]
 
@@ -48,20 +47,41 @@ COLLECTION_NAMES = ["policy_docs", "slack_messages", "support_tickets"]
 UPLOAD_COLLECTION = "policy_docs"
 ALLOWED_ACCESS_LEVELS = {"public", "manager"}
 
-embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
+vector_stores = None
 
-vector_stores = {
-    name: Chroma(
-        collection_name=name,
-        embedding_function=embeddings,
-        persist_directory=PERSIST_DIR,
-    )
-    for name in COLLECTION_NAMES
-}
+
+def get_stores():
+    global vector_stores
+    if vector_stores is None:
+        from langchain_community.vectorstores import Chroma
+        from langchain_openai import OpenAIEmbeddings
+        embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
+        vector_stores = {name: Chroma(collection_name=name, embedding_function=embeddings,
+                                      persist_directory=PERSIST_DIR) for name in COLLECTION_NAMES}
+    return vector_stores
+
+
+def document_id(collection, source):
+    if not isinstance(source, str) or not source:
+        return None
+    return hashlib.sha256(json.dumps([collection, source], separators=(",", ":"), ensure_ascii=True).encode()).hexdigest()
+
+
+def search_response(results):
+    payload = {"results": results}
+    if os.getenv("WARDEN_GUARD_ENABLED", "false").lower() == "true":
+        payload["guardEvidence"] = {
+            "requestId": request.headers.get("X-Trace-Id"), "complete": True,
+            "documents": [{"documentId": row.get("documentId"), "accessLevel": row.get("accessLevel")}
+                          for row in results],
+        }
+    response = jsonify(payload)
+    response.headers["X-Trace-Id"] = request.headers.get("X-Trace-Id", "")
+    return response
 
 # Same settings as data/ground/ingestion.py, so a chunk uploaded through the
 # UI looks the same size/shape as one produced by the batch script.
-splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=100)
+splitter = None
 
 app = Flask(__name__)
 
@@ -110,7 +130,7 @@ def search():
     ]
 
     if not allowed_levels:
-        return jsonify({"results": []})
+        return search_response([])
 
     if len(allowed_levels) == 1:
         access_filter = {
@@ -133,7 +153,7 @@ def search():
     dense_results = []
     bm25_documents = []
 
-    for source_type, store in vector_stores.items():
+    for source_type, store in get_stores().items():
 
         # -----------------------------------------
         # 1. DENSE RETRIEVAL (existing Chroma search)
@@ -244,20 +264,21 @@ def search():
             "accessLevel": item["accessLevel"],
             "content": item["content"],
             "distance": item["distance"],
-            "rrfScore": item["rrfScore"]
+            "rrfScore": item["rrfScore"],
+            "documentId": document_id(item["sourceType"], item["sourceFile"])
         })
 
     print("Dense candidates:", len(dense_results))
     print("BM25 candidates:", len(bm25_results))
-    print("Hybrid results:", [
-        r["sourceFile"] for r in results
-    ])
-
-    return jsonify({"results": results})
+    return search_response(results)
 
 
 @app.post("/ingest")
 def ingest():
+    global splitter
+    if splitter is None:
+        from langchain_text_splitters import RecursiveCharacterTextSplitter
+        splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=100)
     body = request.get_json(force=True)
     filename = (body.get("filename") or "").strip()
     content = body.get("content") or ""
@@ -281,7 +302,7 @@ def ingest():
     # does. That reset is right for a full re-ingest of the seed dataset;
     # a single upload from the UI should never nuke everything already in
     # policy_docs.
-    vector_stores[UPLOAD_COLLECTION].add_texts(texts=chunks, metadatas=metadatas)
+    get_stores()[UPLOAD_COLLECTION].add_texts(texts=chunks, metadatas=metadatas)
 
     print(f"Ingested '{filename}' ({access_level}) -> {UPLOAD_COLLECTION}: {len(chunks)} chunks")
 

@@ -1,6 +1,8 @@
 package com.warden.service;
 
 import com.warden.domain.RetrievedChunk;
+import com.warden.guard.SecurityEvidence;
+import org.slf4j.MDC;
 import java.util.List;
 import java.util.Map;
 import org.springframework.beans.factory.annotation.Value;
@@ -67,9 +69,11 @@ public class OllamaChatService {
          """;
 
         StringBuilder sourcesBlock = new StringBuilder();
+        SecurityEvidence evidence = SecurityEvidence.current();
 
         for (int i = 0; i < authorizedChunks.size(); i++) {
             RetrievedChunk chunk = authorizedChunks.get(i);
+            if (evidence != null) evidence.modelContext.add(SecurityEvidence.document(chunk));
 
             sourcesBlock
                     .append("Source ")
@@ -86,12 +90,11 @@ public class OllamaChatService {
                 "\n\nSources:\n" +
                 sourcesBlock;
 
-       System.out.println("========== OLLAMA PROMPT ==========");
-       System.out.println(userPrompt);
-       System.out.println("===================================");
+        if (evidence != null) evidence.modelCalled = true;
 
         Map<String, Object> response = restClient.post()
                 .uri("/api/chat")
+                .header("X-Trace-Id", MDC.get("traceId") == null ? "" : MDC.get("traceId"))
                 .body(Map.of(
                         "model", chatModel,
                         "stream", false,
@@ -116,6 +119,7 @@ public class OllamaChatService {
             );
         }
 
+        if (evidence != null) evidence.modelContextComplete = true;
         return String.valueOf(message.get("content"));
     }
 }

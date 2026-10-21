@@ -1,6 +1,8 @@
 package com.warden.service;
 
 import com.warden.domain.AccessLevel;
+import com.warden.guard.SecurityEvidence;
+import org.slf4j.MDC;
 import com.warden.domain.RetrievedChunk;
 import com.warden.web.dto.IngestResponse;
 import java.util.List;
@@ -42,6 +44,7 @@ public class RetrievalService {
 
         Map<String, Object> response = restClient.post()
                 .uri("/search")
+                .header("X-Trace-Id", MDC.get("traceId") == null ? "" : MDC.get("traceId"))
                 .body(Map.of(
                         "question", question,
                         "allowedAccessLevels", allowedLevels,
@@ -54,7 +57,7 @@ public class RetrievalService {
             throw new IllegalStateException("Retrieval service returned no results field");
         }
 
-        return rawResults.stream()
+        List<RetrievedChunk> chunks = rawResults.stream()
                 .map(raw -> (Map<String, Object>) raw)
                 .map(row -> new RetrievedChunk(
                         String.valueOf(row.get("id")),
@@ -64,9 +67,12 @@ public class RetrievalService {
                         String.valueOf(row.get("content")),
                         row.get("distance") instanceof Number number
                         ? number.doubleValue()
-                        : Double.NaN                        
+                        : Double.NaN,
+                        row.get("documentId") instanceof String id ? id : null
                 ))
                 .toList();
+        if (SecurityEvidence.current() != null) SecurityEvidence.current().retrieval(chunks, response.get("guardEvidence"));
+        return chunks;
     }
 
     public IngestResponse ingest(String filename, String content, String accessLevel) {

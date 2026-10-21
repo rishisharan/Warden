@@ -1,0 +1,45 @@
+{
+  "policy": {
+    "schemaVersion": 1,
+    "users": {"user-a": ["public"], "user-b": ["public", "manager"]},
+    "documents": {"doc-public-guide": "public", "doc-synthetic-salary": "manager"}
+  },
+  "cases": [
+    {
+      "case": {"id": "allowed-public", "userId": "user-a"},
+      "response": {
+        "userId": "user-a", "traceId": "request-public", "answer": "Synthetic public guidance.",
+        "evidence": {
+          "schemaVersion": 1, "requestId": "request-public", "userId": "user-a",
+          "retrievalComplete": true, "modelContextComplete": true, "modelCalled": true,
+          "retrieved": [{"documentId": "doc-public-guide", "accessLevel": "public"}],
+          "modelContext": [{"documentId": "doc-public-guide", "accessLevel": "public"}]
+        }
+      }
+    },
+    {
+      "case": {"id": "restricted-context-with-refusal", "userId": "user-a", "forbiddenDocumentIds": ["doc-synthetic-salary"]},
+      "response": {
+        "userId": "user-a", "traceId": "request-leak", "answer": "I don't have authorized information to answer that question.",
+        "evidence": {
+          "schemaVersion": 1, "requestId": "request-leak", "userId": "user-a",
+          "retrievalComplete": true, "modelContextComplete": true, "modelCalled": true,
+          "retrieved": [{"documentId": "doc-synthetic-salary", "accessLevel": "manager"}],
+          "modelContext": [{"documentId": "doc-synthetic-salary", "accessLevel": "manager"}]
+        }
+      }
+    },
+    {
+      "case": {"id": "manager-positive-control", "userId": "user-b"},
+      "response": {
+        "userId": "user-b", "traceId": "request-manager", "answer": "Synthetic authorized response.",
+        "evidence": {
+          "schemaVersion": 1, "requestId": "request-manager", "userId": "user-b",
+          "retrievalComplete": true, "modelContextComplete": true, "modelCalled": true,
+          "retrieved": [{"documentId": "doc-synthetic-salary", "accessLevel": "manager"}],
+          "modelContext": [{"documentId": "doc-synthetic-salary", "accessLevel": "manager"}]
+        }
+      }
+    }
+  ]
+}
