@@ -1,6 +1,6 @@
 """
 Warden retrieval service - queries (and, since the /ingest endpoint below,
-also adds to) the Chroma collections built by data/ground/ingestion.py.
+also adds to) the Chroma collections built by ingestion.py.
 
 Matches ingestion.py exactly: same embedding model (OpenAI
 text-embedding-3-small - must match, different embedding models are not
@@ -33,10 +33,11 @@ from rank_bm25 import BM25Okapi
 
 # Same .env ingestion.py reads (OPENAI_API_KEY), so this service doesn't
 # need its own copy of the key.
-GROUND_DIR = Path(r"E:\Forward deployment engineer\Warden\data\ingestion-pipeline")
-load_dotenv(dotenv_path=os.getenv("WARDEN_ENV_FILE", str(GROUND_DIR / ".env")), override=True)
+SEARCH_DIR = Path(__file__).resolve().parent
+DEFAULT_DATA_DIR = SEARCH_DIR.parent / "data"
+load_dotenv(dotenv_path=os.getenv("WARDEN_ENV_FILE", str(SEARCH_DIR / ".env")), override=True)
 
-ROOT = Path(os.getenv("WARDEN_DATA_DIR", r"E:\Forward deployment engineer\Warden\data"))
+ROOT = Path(os.getenv("WARDEN_DATA_DIR", str(DEFAULT_DATA_DIR)))
 PERSIST_DIR = str(ROOT / "chroma_store")
 COLLECTION_NAMES = ["policy_docs", "slack_messages", "support_tickets"]
 
@@ -79,7 +80,7 @@ def search_response(results):
     response.headers["X-Trace-Id"] = request.headers.get("X-Trace-Id", "")
     return response
 
-# Same settings as data/ground/ingestion.py, so a chunk uploaded through the
+# Same settings as ingestion.py, so a chunk uploaded through the
 # UI looks the same size/shape as one produced by the batch script.
 splitter = None
 

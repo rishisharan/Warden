@@ -12,7 +12,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
 
 /**
- * Calls the Python retrieval service (see python-retrieval/retrieval_service.py),
+ * Calls the Python retrieval service (see warden-search/retrieval_service.py),
  * which owns the Chroma vector store. This is the single choke point between
  * "what documents exist" and "what the model gets to see": the caller's
  * allowed access levels are sent as part of the request, and Chroma's own

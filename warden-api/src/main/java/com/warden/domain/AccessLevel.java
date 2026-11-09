@@ -4,7 +4,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Access tiers, matching the values data/ground/ingestion.py actually
+ * Access tiers, matching the values warden-search/ingestion.py actually
  * writes into each chunk's `access_level` metadata: lowercase "public" and
  * "manager" - not the earlier three-tier PUBLIC/MANAGER_ONLY/CONFIDENTIAL
  * scheme. wireValue() is what gets sent to the Python retrieval service;

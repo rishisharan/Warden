@@ -8,8 +8,10 @@ import os
 
 from dotenv import load_dotenv
 
-load_dotenv()
-root = Path(r"E:\Forward deployment engineer\Warden\data")
+search_dir = Path(__file__).resolve().parent
+load_dotenv(dotenv_path=os.getenv("WARDEN_ENV_FILE", str(search_dir / ".env")), override=True)
+default_data_dir = search_dir.parent / "data"
+root = Path(os.getenv("WARDEN_DATA_DIR", str(default_data_dir)))
 
 folder_map = {
     "policy_docs": root / "policy-docs",

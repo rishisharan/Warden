@@ -25,7 +25,7 @@ class EndToEndTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         from werkzeug.serving import make_server
-        path = ROOT.parent / "warden-api/python-retrieval/tests/test_guard_instrumentation.py"
+        path = ROOT.parent / "warden-search/tests/test_guard_instrumentation.py"
         spec = importlib.util.spec_from_file_location("synthetic_retrieval", path)
         cls.fixture = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(cls.fixture)

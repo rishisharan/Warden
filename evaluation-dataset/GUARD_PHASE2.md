@@ -88,7 +88,7 @@ Full synthetic integration requires Python packages `flask`, `chromadb`,
 
 ```powershell
 python -m pip install flask chromadb rank-bm25 python-dotenv
-python -B -m unittest discover -s warden-api/python-retrieval/tests -v
+python -B -m unittest discover -s warden-search/tests -v
 $env:WARDEN_RUN_INTEGRATION = '1'
 python -B -m unittest discover -s evaluation-dataset/tests -v
 ```

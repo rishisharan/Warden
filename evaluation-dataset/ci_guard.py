@@ -204,7 +204,7 @@ def flatten(suite):
 
 def run_python_child(name, result_file):
     if name == "retrieval":
-        suite = unittest.defaultTestLoader.discover(str(REPO / "warden-api/python-retrieval/tests"))
+        suite = unittest.defaultTestLoader.discover(str(REPO / "warden-search/tests"))
     else:
         suite = unittest.defaultTestLoader.discover(str(ROOT / "tests"))
         suite = unittest.TestSuite(test for test in flatten(suite) if
