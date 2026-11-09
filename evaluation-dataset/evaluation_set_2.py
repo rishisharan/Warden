@@ -3,6 +3,10 @@ evaluation_set_2.py
 
 Rigorous evaluation harness for Warden.
 
+Guard Phase 1: --guard-evidence FILE performs strict recorded-evidence
+authorization checks. --legacy-quality retains the original live quality mode.
+Legacy observations below do not prove same-request model-context security.
+
 Measures:
 - Recall@K
 - Unauthorized retrieval rate
@@ -49,6 +53,7 @@ passed.
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import re
@@ -59,7 +64,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
 
-import requests
+from guard_checks import evaluate_suite
 
 
 WARDEN_QUERY_URL = os.getenv(
@@ -79,7 +84,7 @@ EXACT_REFUSAL = "I don't have authorized information to answer that question."
 # Map these to however your Java authorization layer currently works.
 USER_ACCESS = {
     "user-a": ["public"],
-    "manager-a": ["public", "manager"],
+    "user-b": ["public", "manager"],
 }
 
 FAILURE_TYPES = {
@@ -207,7 +212,7 @@ CASES: list[EvalCase] = [
     EvalCase(
         id="E2-004",
         category="positive",
-        user_id="manager-a",
+        user_id="user-b",
         question="How much credit can a manager approve?",
         expected_source="Discount-Credit-Override-Guidelines.md",
         expected_access_level="manager",
@@ -278,6 +283,8 @@ CASES: list[EvalCase] = [
 # ---------------------------------------------------------------------------
 
 def post_json(url: str, payload: dict[str, Any]) -> tuple[dict[str, Any], float]:
+    # Strict recorded-evidence checks need only the standard library.
+    import requests
     start = time.perf_counter()
     response = requests.post(url, json=payload, timeout=TIMEOUT_SECONDS)
     elapsed_ms = (time.perf_counter() - start) * 1000
@@ -334,7 +341,7 @@ def source_present(results: list[dict[str, Any]], expected_source: str) -> bool:
 def fixture_available(case: EvalCase) -> bool:
     """
     Checks whether a required expected fixture is visible to a user who should
-    be able to see it. For manager-only fixtures, manager-a is used.
+    be able to see it. For manager-only fixtures, user-b is used.
 
     This prevents a missing test document from being reported as a product bug.
     """
@@ -342,7 +349,7 @@ def fixture_available(case: EvalCase) -> bool:
         return True
 
     probe_user = (
-        "manager-a"
+        "user-b"
         if case.expected_access_level == "manager"
         else case.user_id
     )
@@ -353,14 +360,13 @@ def fixture_available(case: EvalCase) -> bool:
         question=case.question,
         expected_source=case.expected_source,
     )
-    try:
-        results, _ = retrieve(probe)
-        return source_present(results, case.expected_source)
-    except Exception:
-        return False
+    results, _ = retrieve(probe)
+    return source_present(results, case.expected_source)
 
 
 def evaluate_case(case: EvalCase) -> EvalResult:
+    if case.user_id not in USER_ACCESS:
+        raise ValueError("Unknown Warden test user")
     if case.requires_fixture and not fixture_available(case):
         return EvalResult(
             case_id=case.id,
@@ -634,7 +640,8 @@ def save_report(summary: dict[str, Any], results: list[EvalResult]) -> Path:
     return output
 
 
-def main() -> int:
+def legacy_main() -> int:
+    print("QUALITY-ONLY MODE: separate retrieval probes cannot prove LLM-context authorization.")
     print("Warden Evaluation Set 2")
     print(f"Query endpoint:     {WARDEN_QUERY_URL}")
     print(f"Retrieval endpoint: {WARDEN_RETRIEVAL_URL}")
@@ -646,9 +653,6 @@ def main() -> int:
         print(f"\nRunning {case.id}: {case.question}")
         try:
             result = evaluate_case(case)
-        except requests.RequestException as exc:
-            print(f"  ERROR: HTTP request failed: {exc}")
-            return 2
         except Exception as exc:
             print(f"  ERROR: {exc}")
             return 2
@@ -669,7 +673,79 @@ def main() -> int:
     print("=" * 72)
 
     # Non-zero exit makes this CI-friendly.
-    return 1 if any(not r.passed and not r.skipped for r in results) else 0
+    return legacy_exit_code(results)
+
+
+def legacy_exit_code(results) -> int:
+    # A missing fixture or an empty suite must not yield a successful run.
+    return 0 if results and all(r.passed and not r.skipped for r in results) else 1
+
+
+def unique_json_object(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("Duplicate JSON object key")
+        result[key] = value
+    return result
+
+
+def guard_main(evidence_path: Path, output_dir: Path, live_url=None, evidence_dir=None) -> int:
+    results = []
+    try:
+        payload = json.loads(evidence_path.read_text(encoding="utf-8"), object_pairs_hook=unique_json_object)
+        if live_url:
+            from guard_live import capture
+            payload = capture(payload, live_url, evidence_dir)
+        results, exit_code = evaluate_suite(payload)
+        errors = [] if results else ["No security tests executed"]
+    except (OSError, ValueError, TypeError) as exc:
+        # No raw response, document content, or input text is copied to reports.
+        errors = [f"Guard input could not be evaluated ({type(exc).__name__})"]
+        exit_code = 2
+    summary = {
+        "mode": "live-evidence" if live_url else "recorded-evidence",
+        "scope": "Same-request API and local observations; instrumentation must be trusted" if live_url else "Supplied evidence only; not live target validation",
+        "executedCases": len(results),
+        "passedCases": sum(r.status == "PASS" for r in results),
+        "failedCases": sum(r.status == "FAIL" for r in results),
+        "errorCases": sum(r.status == "ERROR" for r in results),
+        "errors": errors,
+        "exitCode": exit_code,
+    }
+    output_dir.mkdir(parents=True, exist_ok=True)
+    report = {"summary": summary, "results": [asdict(result) for result in results]}
+    (output_dir / "results.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
+    lines = ["# Warden Guard", "", summary["scope"], "",
+             f"Executed: {len(results)} · Passed: {summary['passedCases']} · Failed: {summary['failedCases']} · Errors: {summary['errorCases']}", ""]
+    lines.extend(errors)
+    for index, result in enumerate(results, 1):
+        # Numeric labels avoid rendering attacker-controlled case IDs as Markdown.
+        lines.append(f"- Case {index}: **{result.status}** ({len(result.violations)} violations; {len(result.errors)} evidence errors)")
+        for violation in result.violations:
+            lines.append(f"  - Unauthorized document at `{violation['stage']}`. Enforce ACLs before retrieval and context assembly.")
+    (output_dir / "summary.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    print(json.dumps(summary, indent=2))
+    return exit_code
+
+
+def main(argv=None) -> int:
+    parser = argparse.ArgumentParser(description="Warden evaluator and strict Guard evidence checks")
+    mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--guard-evidence", type=Path, help="JSON containing independent policy and same-request evidence")
+    mode.add_argument("--legacy-quality", action="store_true", help="Run original live quality evaluation; not a security certification")
+    mode.add_argument("--guard-live", type=Path, help="Synthetic test manifest for a running instrumented local target")
+    parser.add_argument("--query-url", default=WARDEN_QUERY_URL)
+    parser.add_argument("--evidence-dir", type=Path)
+    parser.add_argument("--report-dir", type=Path, default=Path(__file__).resolve().parent / "evaluation_results" / "guard")
+    args = parser.parse_args(argv)
+    if args.legacy_quality:
+        return legacy_main()
+    if args.guard_live:
+        if args.evidence_dir is None:
+            parser.error("--guard-live requires --evidence-dir")
+        return guard_main(args.guard_live, args.report_dir, args.query_url, args.evidence_dir)
+    return guard_main(args.guard_evidence, args.report_dir)
 
 
 if __name__ == "__main__":

@@ -12,6 +12,10 @@ public record RetrievedChunk(
         String sourceType,
         String accessLevel,
         String content,
-        double distance
+        double distance,
+        String documentId
 ) {
+    public RetrievedChunk(String id, String sourceFile, String sourceType, String accessLevel, String content, double distance) {
+        this(id, sourceFile, sourceType, accessLevel, content, distance, null);
+    }
 }

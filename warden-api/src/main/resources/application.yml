@@ -21,7 +21,7 @@ app:
   warden:
     top-k: 1
     # The Python service that owns the Chroma vector store - see
-    # python-retrieval/retrieval_service.py. Java never talks to Chroma
+    # warden-search/retrieval_service.py. Java never talks to Chroma
     # directly; it sends the question text plus the caller's allowed
     # access levels and gets back only chunks already filtered to those
     # levels.

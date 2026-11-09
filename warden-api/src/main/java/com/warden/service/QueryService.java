@@ -1,6 +1,7 @@
 package com.warden.service;
 
 import com.warden.domain.RetrievedChunk;
+import com.warden.guard.SecurityEvidence;
 import com.warden.domain.WardenUser;
 import com.warden.web.dto.CitedSource;
 import com.warden.web.dto.QueryResponse;
@@ -30,19 +31,16 @@ public class QueryService {
         long totalStart = System.currentTimeMillis();
 
         WardenUser user = userService.require(userId);
+        SecurityEvidence evidence = SecurityEvidence.current();
+        if (evidence != null) {
+            evidence.userId = user.userId();
+            evidence.allowed = user.clearance().allowedLevelsUpToInclusive();
+        }
         List<RetrievedChunk> authorized = retrievalService.retrieveAuthorized(question, user.clearance());
-        authorized.forEach(chunk ->
-            log.info(
-                "source={}, access={}, content={}",
-                chunk.sourceFile(),
-                chunk.accessLevel(),
-                chunk.content()
-            )
-        );
         if (authorized.isEmpty()) {
+            if (evidence != null) evidence.modelContextComplete = true;
             long totalDuration = System.currentTimeMillis() - totalStart;
-            log.info("traceId={} userId={} clearance={} query=\"{}\" retrievedChunks=0 topDistance=n/a model={} llmDuration=0ms totalDuration={}ms",
-                    traceId, userId, user.clearance().name(), question, chatService.model(), totalDuration);
+            log.info("traceId={} retrievedChunks=0 model={} totalDuration={}ms", traceId, chatService.model(), totalDuration);
 
             return new QueryResponse(
                     userId,
@@ -64,11 +62,8 @@ public class QueryService {
 
         long totalDuration = System.currentTimeMillis() - totalStart;
 
-        log.info("traceId={} userId={} clearance={} query=\"{}\" retrievedChunks={} topDistance={} model={} llmDuration={}ms totalDuration={}ms",
+        log.info("traceId={} retrievedChunks={} topDistance={} model={} llmDuration={}ms totalDuration={}ms",
                 traceId,
-                userId,
-                user.clearance().name(),
-                question,
                 authorized.size(),
                 String.format("%.3f", authorized.get(0).distance()),
                 chatService.model(),

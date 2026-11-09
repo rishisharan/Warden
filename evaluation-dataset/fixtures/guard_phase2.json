@@ -1,0 +1,14 @@
+{
+  "policy": {
+    "schemaVersion": 1,
+    "users": {"user-a": ["public"], "user-b": ["public", "manager"]},
+    "documents": {
+      "d4d85910fe5de0e43b6e10c0c8049fc199fd8ab4eda7509b5a6f3b63779d88fc": "public",
+      "38f8b51b3aa7c5d7c8322ddf4e7e79541464e365f170cd330603b85c1395e6d2": "manager"
+    }
+  },
+  "cases": [
+    {"id": "public-control", "userId": "user-a", "question": "synthetic public guidance"},
+    {"id": "manager-control", "userId": "user-b", "question": "synthetic salary"}
+  ]
+}
