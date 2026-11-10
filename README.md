@@ -1,6 +1,6 @@
 # Warden API
 
-Permission-aware knowledge retrieval for a fictional B2B support team.
+An enterprise RAG system that combines hybrid retrieval, role-based authorization, grounded LLM responses, and systematic evaluation to prevent unauthorized information from reaching the language model.
 
 ## Architecture
 
