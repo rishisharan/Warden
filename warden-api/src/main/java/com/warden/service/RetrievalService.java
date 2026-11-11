@@ -33,8 +33,13 @@ public class RetrievalService {
 
     public RetrievalService(
             @Value("${app.warden.retrieval-base-url}") String retrievalBaseUrl,
-            @Value("${app.warden.top-k}") int topK) {
-        this.restClient = RestClient.create(retrievalBaseUrl);
+            @Value("${app.warden.top-k}") int topK,
+            @Value("${WARDEN_RETRIEVAL_SERVICE_TOKEN:}") String serviceToken) {
+        this.restClient = RestClient.builder().baseUrl(retrievalBaseUrl)
+                .defaultHeaders(headers -> {
+                    if (!serviceToken.isBlank()) headers.setBearerAuth(serviceToken);
+                })
+                .build();
         this.topK = topK;
     }
 
@@ -63,7 +68,7 @@ public class RetrievalService {
                         String.valueOf(row.get("id")),
                         String.valueOf(row.get("sourceFile")),
                         String.valueOf(row.get("sourceType")),
-                        String.valueOf(row.get("accessLevel")),
+                        row.get("accessLevel") instanceof String access ? access : null,
                         String.valueOf(row.get("content")),
                         row.get("distance") instanceof Number number
                         ? number.doubleValue()

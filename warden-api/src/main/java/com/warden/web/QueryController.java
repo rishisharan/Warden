@@ -6,6 +6,8 @@ import com.warden.service.UserService;
 import com.warden.web.dto.QueryRequest;
 import com.warden.web.dto.QueryResponse;
 import jakarta.validation.Valid;
+import java.security.Principal;
+import org.springframework.security.web.csrf.CsrfToken;
 import java.util.List;
 import org.slf4j.MDC;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -27,14 +29,18 @@ public class QueryController {
     }
 
     @PostMapping("/query")
-    public QueryResponse query(@Valid @RequestBody QueryRequest request) {
+    public QueryResponse query(@Valid @RequestBody QueryRequest request, Principal principal) {
         String traceId = MDC.get(TraceIdFilter.TRACE_ID_MDC_KEY);
-        return queryService.answer(traceId, request.userId(), request.question());
+        return queryService.answer(traceId, principal.getName(), request.question());
     }
 
-    /** Lists the fake users (and their clearance) - stands in for a login screen. */
     @GetMapping("/users")
-    public List<WardenUser> users() {
-        return userService.listAll();
+    public List<WardenUser> users(Principal principal) {
+        return List.of(userService.require(principal.getName()));
+    }
+
+    @GetMapping("/csrf")
+    public CsrfToken csrf(CsrfToken token) {
+        return token;
     }
 }

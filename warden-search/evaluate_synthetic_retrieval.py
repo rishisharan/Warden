@@ -77,7 +77,8 @@ def build_cases():
 def search(url, case, top_k, timeout):
     payload = {"question": case.question, "allowedAccessLevels": case.allowed, "topK": top_k}
     request = Request(url, data=json.dumps(payload).encode("utf-8"),
-                      headers={"Content-Type": "application/json"}, method="POST")
+                      headers={"Content-Type": "application/json",
+                               "Authorization": "Bearer " + os.environ["WARDEN_RETRIEVAL_SERVICE_TOKEN"]}, method="POST")
     with urlopen(request, timeout=timeout) as response:
         result = json.load(response)
 
@@ -116,6 +117,9 @@ def main(argv=None):
     args = parser.parse_args(argv)
     if not 1 <= args.top_k <= 50 or not 0 < args.timeout < float("inf"):
         parser.error("--top-k must be between 1 and 50 and --timeout must be finite and positive")
+
+    if not os.getenv("WARDEN_RETRIEVAL_SERVICE_TOKEN", "").strip():
+        parser.error("set WARDEN_RETRIEVAL_SERVICE_TOKEN for the trusted local evaluator")
 
     cases = list(build_cases())
     passed = 0

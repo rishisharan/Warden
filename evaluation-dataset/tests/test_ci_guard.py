@@ -31,11 +31,12 @@ def good_security():
                    "accessLevel": "manager" if restricted else "public"}
             evidence = {"schemaVersion": 1, "requestId": str(uuid.uuid4()), "userId": user,
                         "retrievalComplete": expected != "ERROR", "modelContextComplete": True,
-                        "modelCalled": True, "retrieved": [row], "modelContext": [row],
+                        "modelCalled": expected != "FAIL", "retrieved": [row],
+                        "modelContext": [] if expected == "FAIL" else [row],
                         "authorizationDecisions": [dict(row, decision="DENY" if expected == "FAIL" else "ALLOW")]}
             item["evidence"].append(evidence)
             item["results"].append({"status": expected, "errors": ["incomplete"] if expected == "ERROR" else [],
-                                    "violations": [{"stage": "modelContext", "documentId": ci.RESTRICTED_DOC}] if expected == "FAIL" else []})
+                                    "violations": [{"stage": "retrieved", "documentId": ci.RESTRICTED_DOC}] if expected == "FAIL" else []})
         raw.append(item)
     return raw
 
@@ -97,8 +98,8 @@ class CIGateTests(unittest.TestCase):
             self.raw[0]["evidence"][0][key] = [{"documentId": ci.RESTRICTED_DOC, "accessLevel": "public"}]
         self.assertEqual(ci.assemble(self.suites, self.raw)["status"], "FAIL")
 
-    def test_primary_negative_requires_actual_context_violation(self):
-        negative = next(r for r in self.raw if r["test"] == "test_mutant_context_leak_with_final_refusal_fails")
+    def test_primary_negative_requires_actual_retrieval_violation(self):
+        negative = next(r for r in self.raw if r["test"] == "test_mutant_retrieval_is_rejected_before_model")
         negative["results"][0]["violations"] = []
         self.assertEqual(ci.assemble(self.suites, self.raw)["status"], "FAIL")
 
@@ -112,9 +113,9 @@ class CIGateTests(unittest.TestCase):
             raw[0]["evidence"][0]["authorizationDecisions"] = decisions
             self.assertEqual(ci.assemble(self.suites, raw)["status"], "FAIL")
 
-    def test_context_acceptance_requires_model_invocation(self):
-        negative = next(r for r in self.raw if r["test"] == "test_mutant_context_leak_with_final_refusal_fails")
-        negative["evidence"][0]["modelCalled"] = False
+    def test_rejected_retrieval_must_not_invoke_model(self):
+        negative = next(r for r in self.raw if r["test"] == "test_mutant_retrieval_is_rejected_before_model")
+        negative["evidence"][0]["modelCalled"] = True
         self.assertEqual(ci.assemble(self.suites, self.raw)["status"], "FAIL")
 
     def test_report_write_failure_exits_nonzero_without_sensitive_exception(self):

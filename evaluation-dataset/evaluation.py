@@ -1,6 +1,6 @@
 import csv
 import json
-import requests
+from guard_live import authenticated_query
 from pathlib import Path
 
 
@@ -102,20 +102,8 @@ def run_test(test):
 
     user_id = USER_MAP[clearance]
 
-    request_body = {
-        "userId": user_id,
-        "question": test["question"]
-    }
-
-    response = requests.post(
-        WARDEN_URL,
-        json=request_body,
-        timeout=60
-    )
-
-    response.raise_for_status()
-
-    return response.json()
+    with authenticated_query(WARDEN_URL, user_id, test["question"], 60) as response:
+        return json.load(response)
 
 
 # ============================================================

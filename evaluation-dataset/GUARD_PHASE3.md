@@ -21,10 +21,10 @@ No group may be empty, fall below its current minimum test inventory, skip requi
 tests, or have a nonzero process exit/failure/error count. Java results must come
 from fresh Surefire XML in a unique temporary directory; old reports cannot satisfy
 the gate. Surefire `failIfNoTests=true` also blocks the zero-test false green found
-during review. The overridable test report directory is the only POM change.
+during review. The gate uses an overridable test report directory.
 
-Current inventories: 6 Java, 56 evaluator/gate, 5 retrieval, 4 full integration.
-There are 71 tests in total. Adding tests is allowed; removing required tests needs
+Current inventories include 14 Java, 56 evaluator/gate, 9 retrieval, and 4 full integration tests.
+There are 83 tests in total. Adding tests is allowed; removing required tests needs
 an explicit review of the gate's inventory. Ordinary unittest discovery can still
 skip the integration class when not opted in; that is not a successful CI gate.
 
@@ -39,7 +39,7 @@ receipts:
 | Authorized public/manager controls | 2 | PASS | 0 |
 | Concurrent public/manager controls | 4 | PASS | 0 |
 | Deliberately missing Flask evidence | 1 | ERROR | 2 |
-| Restricted context followed by refusal | 1 | FAIL | 1 |
+| Restricted retrieval rejected before Ollama | 1 | FAIL | 1 |
 
 The last two are successful unittest assertions only when the specified failure is
 actually observed. A passing verdict in the deliberate-leak test is a regression.
@@ -50,8 +50,9 @@ never excused merely because some scenario expects a negative Guard verdict.
 
 The report validator independently re-scores the receipts against the synthetic
 ACL manifest values. Expected negative outcomes are not trusted merely because a
-JSON field says they occurred. The context-leak scenario must contain the forbidden
-document in a completed, actual model invocation and a detected context violation.
+JSON field says they occurred. The upstream-leak scenario must record the forbidden
+document in retrieval, a detected retrieval violation, and an empty model context
+with no Ollama invocation.
 
 ## Reports and privacy
 
@@ -111,10 +112,10 @@ Do not claim an uploaded GitHub artifact or successful hosted run from local tes
 
 ## Scope and changed files
 
-The production Java/Python request flow and UI are unchanged by Phase 3. Synthetic
-fixtures remain isolated; the deliberate filter defect stays test-only. The report
-does not certify real OpenAI/Ollama providers, authenticated identity, hidden retrieval
-candidates, or tamper-proof instrumentation.
+The current gate exercises authenticated local Spring sessions and service-token
+checks against isolated synthetic fixtures. The deliberately weakened retrieval filter
+is test-only. Live model behavior, external identity providers, hidden retrieval
+candidates, and tamper resistance remain outside this gate's coverage.
 
 - Added `.github/workflows/warden-guard.yml`.
 - Added `evaluation-dataset/ci_guard.py`.
