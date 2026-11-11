@@ -65,6 +65,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from guard_checks import evaluate_suite
+from guard_live import authenticated_query
 
 
 WARDEN_QUERY_URL = os.getenv(
@@ -286,7 +287,9 @@ def post_json(url: str, payload: dict[str, Any]) -> tuple[dict[str, Any], float]
     # Strict recorded-evidence checks need only the standard library.
     import requests
     start = time.perf_counter()
-    response = requests.post(url, json=payload, timeout=TIMEOUT_SECONDS)
+    token = os.environ["WARDEN_RETRIEVAL_SERVICE_TOKEN"]
+    response = requests.post(url, json=payload, timeout=TIMEOUT_SECONDS,
+                             headers={"Authorization": f"Bearer {token}"})
     elapsed_ms = (time.perf_counter() - start) * 1000
     response.raise_for_status()
     return response.json(), elapsed_ms
@@ -310,11 +313,9 @@ def retrieve(case: EvalCase) -> tuple[list[dict[str, Any]], float]:
 
 
 def ask_warden(case: EvalCase) -> tuple[dict[str, Any], float]:
-    payload = {
-        "userId": case.user_id,
-        "question": case.question,
-    }
-    return post_json(WARDEN_QUERY_URL, payload)
+    start = time.perf_counter()
+    with authenticated_query(WARDEN_QUERY_URL, case.user_id, case.question, TIMEOUT_SECONDS) as response:
+        return json.load(response), (time.perf_counter() - start) * 1000
 
 
 # ---------------------------------------------------------------------------
@@ -696,7 +697,7 @@ def guard_main(evidence_path: Path, output_dir: Path, live_url=None, evidence_di
         payload = json.loads(evidence_path.read_text(encoding="utf-8"), object_pairs_hook=unique_json_object)
         if live_url:
             from guard_live import capture
-            payload = capture(payload, live_url, evidence_dir)
+            payload = capture(payload, live_url, evidence_dir, query=authenticated_query)
         results, exit_code = evaluate_suite(payload)
         errors = [] if results else ["No security tests executed"]
     except (OSError, ValueError, TypeError) as exc:

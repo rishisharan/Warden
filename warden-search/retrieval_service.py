@@ -21,6 +21,7 @@ ingestion.py's full re-ingest, a single upload never deletes/resets a
 collection, it only appends to it.
 """
 import os
+from hmac import compare_digest
 from pathlib import Path
 from dotenv import load_dotenv
 from flask import Flask, request, jsonify
@@ -85,6 +86,15 @@ def search_response(results):
 splitter = None
 
 app = Flask(__name__)
+
+
+@app.before_request
+def require_service_token():
+    if request.endpoint in {"search", "ingest"}:
+        token = os.getenv("WARDEN_RETRIEVAL_SERVICE_TOKEN", "")
+        authorization = request.headers.get("Authorization", "")
+        if not token.strip() or not compare_digest(authorization.encode(), f"Bearer {token}".encode()):
+            return jsonify({"error": "Unauthorized"}), 401
 
 
 def tokenize(text):
@@ -316,4 +326,4 @@ def ingest():
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8011)))
+    app.run(host=os.getenv("WARDEN_RETRIEVAL_HOST", "127.0.0.1"), port=int(os.environ.get("PORT", 8011)))

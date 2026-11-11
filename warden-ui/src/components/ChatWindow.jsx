@@ -23,7 +23,7 @@ export default function ChatWindow({ userId, userLabel }) {
     setSending(true);
 
     try {
-      const response = await sendQuery(userId, question);
+      const response = await sendQuery(question);
       setMessages((prev) => [
         ...prev,
         {

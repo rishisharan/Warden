@@ -20,12 +20,12 @@ from guard_checks import evaluate_evidence
 ROOT = Path(__file__).resolve().parent
 REPO = ROOT.parent
 SUITES = ("java", "evaluator", "retrieval", "integration")
-MINIMUM = {"java": 6, "evaluator": 56, "retrieval": 5, "integration": 4}
+MINIMUM = {"java": 14, "evaluator": 56, "retrieval": 9, "integration": 4}
 SCENARIOS = {
     "test_authorized_real_chain_controls": ("authorized-controls", 2, "PASS", 0),
     "test_concurrent_api_requests_keep_principals_separate": ("concurrent-controls", 4, "PASS", 0),
     "test_missing_flask_evidence_blocks_real_query": ("missing-evidence-acceptance", 1, "ERROR", 2),
-    "test_mutant_context_leak_with_final_refusal_fails": ("context-leak-acceptance", 1, "FAIL", 1),
+    "test_mutant_retrieval_is_rejected_before_model": ("upstream-leak-rejected", 1, "FAIL", 1),
 }
 PUBLIC_DOC = "d4d85910fe5de0e43b6e10c0c8049fc199fd8ab4eda7509b5a6f3b63779d88fc"
 RESTRICTED_DOC = "38f8b51b3aa7c5d7c8322ddf4e7e79541464e365f170cd330603b85c1395e6d2"
@@ -133,13 +133,13 @@ def security_results(raw):
             if expected == "PASS" and verdict.get("violations") != []:
                 raise ValueError("Unexpected violation in positive control")
             if expected == "FAIL":
-                if not evidence["modelCalled"]:
-                    raise ValueError("Missing actual model invocation")
+                if evidence["modelCalled"] or evidence["modelContext"]:
+                    raise ValueError("Rejected retrieval reached the model")
                 violations = verdict.get("violations")
-                if not isinstance(violations, list) or not any(isinstance(v, dict) and v.get("stage") == "modelContext" and v.get("documentId") == RESTRICTED_DOC for v in violations):
-                    raise ValueError("Expected context violation was not detected")
-                if not any(r["documentId"] == RESTRICTED_DOC for r in evidence["modelContext"]):
-                    raise ValueError("Missing actual restricted context")
+                if not isinstance(violations, list) or not any(isinstance(v, dict) and v.get("stage") == "retrieved" and v.get("documentId") == RESTRICTED_DOC for v in violations):
+                    raise ValueError("Expected retrieval violation was not detected")
+                if not any(r["documentId"] == RESTRICTED_DOC for r in evidence["retrieved"]):
+                    raise ValueError("Missing actual restricted retrieval")
             clean.append({"observedVerdict": expected, "evidence": evidence})
         summaries.append({"scenario": label, "expectedVerdict": expected, "assertionPassed": True,
                           "executedCases": count, "observedExitCode": expected_exit, "cases": clean})
@@ -192,7 +192,7 @@ def write_reports(directory, report):
     for scenario in report["securityScenarios"]:
         lines.append(f"- {scenario['scenario']}: expected {scenario['expectedVerdict']}; assertion passed; {scenario['executedCases']} cases.")
     lines += ["", "Reason codes: " + (", ".join(report["reasonCodes"]) or "none"), "",
-              "Scope: synthetic Spring/Flask/Chroma chain with recording Ollama stub; no real-provider or authenticated-identity certification."]
+              "Scope: local Spring session and Flask service authentication, synthetic Chroma, and a recording Ollama stub. External identity and live model behavior are outside this gate."]
     (directory / "summary.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
@@ -270,7 +270,7 @@ def verify(directory, github_summary=False):
         for scenario in report["securityScenarios"]:
             raw.append({"test": by_label[scenario["scenario"]], "exitCode": scenario["observedExitCode"],
                         "results": [{"status": case["observedVerdict"], "errors": [], "violations":
-                            [{"stage": "modelContext", "documentId": RESTRICTED_DOC}] if case["observedVerdict"] == "FAIL" else []}
+                            [{"stage": "retrieved", "documentId": RESTRICTED_DOC}] if case["observedVerdict"] == "FAIL" else []}
                             for case in scenario["cases"]], "evidence": [case["evidence"] for case in scenario["cases"]]})
         clean = assemble(report["suites"], raw)
         if report.get("status") != "PASS" or report.get("reasonCodes") != []:

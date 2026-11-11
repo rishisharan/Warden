@@ -10,7 +10,38 @@
   ],
   "item": [
     {
-      "name": "1. List fake users (Java)",
+      "name": "Get CSRF token",
+      "event": [{
+        "listen": "test",
+        "script": { "exec": ["pm.environment.set('warden_csrf', pm.response.json().token);"] }
+      }],
+      "request": { "method": "GET", "url": "{{warden_base}}/api/csrf" }
+    },
+    {
+      "name": "Sign in",
+      "request": {
+        "method": "POST",
+        "url": "{{warden_base}}/api/login",
+        "header": [{ "key": "X-CSRF-TOKEN", "value": "{{warden_csrf}}" }],
+        "body": {
+          "mode": "urlencoded",
+          "urlencoded": [
+            { "key": "username", "value": "{{warden_username}}" },
+            { "key": "password", "value": "{{warden_password}}" }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Sign out",
+      "request": {
+        "method": "POST",
+        "url": "{{warden_base}}/api/logout",
+        "header": [{ "key": "X-CSRF-TOKEN", "value": "{{warden_csrf}}" }]
+      }
+    },
+    {
+      "name": "1. Get current authenticated user (Java)",
       "request": {
         "method": "GET",
         "url": "{{warden_base}}/api/users"
@@ -20,7 +51,7 @@
       "name": "2. Query as User A (support rep - public only)",
       "request": {
         "method": "POST",
-        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "header": [{ "key": "Content-Type", "value": "application/json" }, { "key": "X-CSRF-TOKEN", "value": "{{warden_csrf}}" }],
         "url": "{{warden_base}}/api/query",
         "body": {
           "mode": "raw",
@@ -32,7 +63,7 @@
       "name": "3. Query as User B (manager - full clearance)",
       "request": {
         "method": "POST",
-        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "header": [{ "key": "Content-Type", "value": "application/json" }, { "key": "X-CSRF-TOKEN", "value": "{{warden_csrf}}" }],
         "url": "{{warden_base}}/api/query",
         "body": {
           "mode": "raw",
@@ -44,7 +75,7 @@
       "name": "4. Query - public FAQ (both users should answer the same)",
       "request": {
         "method": "POST",
-        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "header": [{ "key": "Content-Type", "value": "application/json" }, { "key": "X-CSRF-TOKEN", "value": "{{warden_csrf}}" }],
         "url": "{{warden_base}}/api/query",
         "body": {
           "mode": "raw",
@@ -53,10 +84,10 @@
       }
     },
     {
-      "name": "5. Query unknown user (expect 404)",
+      "name": "5. Query with a forged body userId (expect current session user)",
       "request": {
         "method": "POST",
-        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "header": [{ "key": "Content-Type", "value": "application/json" }, { "key": "X-CSRF-TOKEN", "value": "{{warden_csrf}}" }],
         "url": "{{warden_base}}/api/query",
         "body": {
           "mode": "raw",
@@ -65,7 +96,7 @@
       }
     },
     {
-      "name": "6. Raw retrieval search (Python, bypasses Ollama chat)",
+      "name": "6. Direct retrieval without service credential (expect 401)",
       "request": {
         "method": "POST",
         "header": [{ "key": "Content-Type", "value": "application/json" }],
@@ -80,6 +111,7 @@
       "name": "7. Upload document (Java, multipart - what the UI calls)",
       "request": {
         "method": "POST",
+        "header": [{ "key": "X-CSRF-TOKEN", "value": "{{warden_csrf}}" }],
         "url": "{{warden_base}}/api/documents",
         "body": {
           "mode": "formdata",
@@ -94,6 +126,7 @@
       "name": "8. Upload document - bad access level (expect 400)",
       "request": {
         "method": "POST",
+        "header": [{ "key": "X-CSRF-TOKEN", "value": "{{warden_csrf}}" }],
         "url": "{{warden_base}}/api/documents",
         "body": {
           "mode": "formdata",

@@ -16,7 +16,9 @@ from urllib.request import urlopen
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from guard_live import capture
+from guard_live import authenticated_query, capture
+from functools import partial
+from unittest.mock import patch
 from guard_checks import evaluate_suite
 
 
@@ -30,6 +32,11 @@ class EndToEndTests(unittest.TestCase):
         cls.fixture = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(cls.fixture)
         cls.store = cls.fixture.synthetic_store()
+        service_token = cls.fixture.SERVICE_TOKEN
+        credentials = patch.dict(os.environ, {"WARDEN_RETRIEVAL_SERVICE_TOKEN": service_token})
+        credentials.start()
+        cls.addClassCleanup(credentials.stop)
+        cls.query = staticmethod(partial(authenticated_query, password="warden-test-password"))
         cls.fixture.service.vector_stores = {"policy_docs": cls.store}
         cls.previous_guard = os.environ.get("WARDEN_GUARD_ENABLED")
         os.environ["WARDEN_GUARD_ENABLED"] = "true"
@@ -62,17 +69,20 @@ class EndToEndTests(unittest.TestCase):
         cls.url = f"http://127.0.0.1:{port}/api/query"
         java = os.getenv("WARDEN_TEST_JAVA", "java")
         jar = ROOT.parent / "warden-api/target/warden-api.jar"
+        child_env = {**os.environ,
+                     "WARDEN_REP_PASSWORD_HASH": "$2b$04$GlFSY5iQy3dc0HEMLTiKkOy81/Jl7hF/LJ1yUh4HjCjwFWPewMN9u",
+                     "WARDEN_MANAGER_PASSWORD_HASH": "$2b$04$GlFSY5iQy3dc0HEMLTiKkOy81/Jl7hF/LJ1yUh4HjCjwFWPewMN9u"}
         cls.process = subprocess.Popen([java, "-jar", str(jar), f"--server.port={port}", "--server.address=127.0.0.1",
             "--app.warden.guard.enabled=true", f"--app.warden.guard.evidence-dir={cls.directory}",
             f"--app.warden.retrieval-base-url=http://127.0.0.1:{cls.flask.server_port}",
             f"--app.ollama.base-url=http://127.0.0.1:{cls.ollama.server_port}"], stdout=cls.log, stderr=subprocess.STDOUT,
-            creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0)
+            env=child_env, creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0)
         cls.addClassCleanup(cls.stop_process)
         cls.reports = []
         deadline = time.monotonic() + 45
         while time.monotonic() < deadline:
             try:
-                with urlopen(f"http://127.0.0.1:{port}/api/users", timeout=1): break
+                with urlopen(f"http://127.0.0.1:{port}/api/csrf", timeout=1): break
             except Exception:
                 if cls.process.poll() is not None: raise RuntimeError("Synthetic Spring process failed; inspect temporary Java log")
                 time.sleep(.1)
@@ -110,7 +120,7 @@ class EndToEndTests(unittest.TestCase):
         self.manifest = json.loads((ROOT / "fixtures/guard_phase2.json").read_text())
 
     def check(self, manifest):
-        payload = capture(manifest, self.url, self.directory)
+        payload = capture(manifest, self.url, self.directory, query=self.query)
         results, code = evaluate_suite(payload)
         self.reports.append({"test": self._testMethodName, "exitCode": code,
             "results": [asdict(r) for r in results],
@@ -130,15 +140,18 @@ class EndToEndTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertTrue(all(r.status == "PASS" for r in results))
 
-    def test_mutant_context_leak_with_final_refusal_fails(self):
+    def test_mutant_retrieval_is_rejected_before_model(self):
         self.store.unsafe = True
         self.manifest["cases"] = [{"id": "mutant-context-leak", "userId": "user-a", "question": "synthetic salary"}]
         payload, results, code = self.check(self.manifest)
         response = payload["cases"][0]["response"]
-        self.assertIn("don't have authorized information", response["answer"])
-        self.assertIn("SECRET_SENTINEL", json.dumps(self.prompts[response["traceId"]]))
+        self.assertEqual(response["httpStatus"], 502)
+        self.assertEqual(response["answer"], "")
+        self.assertNotIn(response["traceId"], self.prompts)
+        self.assertFalse(response["evidence"]["modelCalled"])
+        self.assertEqual(response["evidence"]["modelContext"], [])
         self.assertEqual(code, 1)
-        self.assertTrue(any(v["stage"] == "modelContext" for v in results[0].violations))
+        self.assertTrue(any(v["stage"] == "retrieved" for v in results[0].violations))
 
     def test_missing_flask_evidence_blocks_real_query(self):
         os.environ["WARDEN_GUARD_ENABLED"] = "false"
@@ -147,7 +160,7 @@ class EndToEndTests(unittest.TestCase):
 
     def test_concurrent_api_requests_keep_principals_separate(self):
         with ThreadPoolExecutor(max_workers=2) as pool:
-            payloads = list(pool.map(lambda _: capture(self.manifest, self.url, self.directory), range(2)))
+            payloads = list(pool.map(lambda _: capture(self.manifest, self.url, self.directory, query=self.query), range(2)))
         traces = []
         all_results, all_evidence = [], []
         for payload in payloads:

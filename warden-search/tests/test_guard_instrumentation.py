@@ -19,6 +19,9 @@ service = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(service)
 
 
+SERVICE_TOKEN = "warden-fixture-service-token"
+
+
 class SyntheticStore:
     """Adapter exposing the two Chroma operations used by production retrieval."""
     def __init__(self, collection):
@@ -56,8 +59,8 @@ class RetrievalEvidenceTests(unittest.TestCase):
         self.store.unsafe = False
 
     def search(self, levels, enabled=True):
-        with patch.dict(os.environ, {"WARDEN_GUARD_ENABLED": str(enabled).lower()}):
-            return service.app.test_client().post("/search", json={"question": "synthetic salary", "allowedAccessLevels": levels}, headers={"X-Trace-Id": "test-correlation"})
+        with patch.dict(os.environ, {"WARDEN_GUARD_ENABLED": str(enabled).lower(), "WARDEN_RETRIEVAL_SERVICE_TOKEN": SERVICE_TOKEN}):
+            return service.app.test_client().post("/search", json={"question": "synthetic salary", "allowedAccessLevels": levels}, headers={"X-Trace-Id": "test-correlation", "Authorization": f"Bearer {SERVICE_TOKEN}"})
 
     def test_public_filter_and_metadata_only_evidence(self):
         response = self.search(["public"])

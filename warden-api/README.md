@@ -41,6 +41,41 @@ access level chosen at upload time is the access level stored on the
 chunk, permanently - there's no "upload now, classify later" step for an
 attacker (or a mistake) to slip through.
 
+## Local security setup
+
+Configure these values outside source control before starting the services.
+
+| Variable | Process | Value |
+|---|---|---|
+| WARDEN_REP_PASSWORD_HASH | Java | BCrypt hash for user-a |
+| WARDEN_MANAGER_PASSWORD_HASH | Java | BCrypt hash for user-b |
+| WARDEN_RETRIEVAL_SERVICE_TOKEN | Java and Flask | The same high-entropy service token |
+| WARDEN_EVAL_REP_PASSWORD | Live evaluator only | Demo rep password |
+| WARDEN_EVAL_MANAGER_PASSWORD | Live evaluator only | Demo manager password |
+
+Use different passwords for the two accounts. An account without a configured
+hash cannot sign in. If your local Python environment already includes bcrypt,
+this PowerShell example prompts for each password without putting it in the
+command history. Launch Java and Flask from shells that inherit their required
+variables.
+
+~~~powershell
+$env:WARDEN_REP_PASSWORD_HASH = python -c "import bcrypt,getpass; print(bcrypt.hashpw(getpass.getpass('Rep password: ').encode(), bcrypt.gensalt()).decode())"
+$env:WARDEN_MANAGER_PASSWORD_HASH = python -c "import bcrypt,getpass; print(bcrypt.hashpw(getpass.getpass('Manager password: ').encode(), bcrypt.gensalt()).decode())"
+$env:WARDEN_RETRIEVAL_SERVICE_TOKEN = python -c "import secrets; print(secrets.token_urlsafe(32))"
+~~~
+
+Use localhost consistently for the browser and Java so the browser sends the
+session cookie. Use HTTPS for any environment outside the local demo.
+
+To verify the boundaries, sign in as user-a and send a query body containing
+userId set to user-b. The response still identifies user-a. With the rep session
+and a valid CSRF token, a document upload returns 403. Sign in as user-b to
+verify a valid upload succeeds. A direct request to Flask search or ingest
+without the service token returns 401, including requests with a user session
+cookie. A synthetic integration test makes Flask return a manager chunk to a
+rep and asserts 502, a recorded retrieval violation, and no Ollama request.
+
 ## Run it
 
 Run each command block from the repository root. Set OPENAI_API_KEY in `warden-search/.env` or in your shell. Both Python entry points support `WARDEN_ENV_FILE` to select a different dotenv file and `WARDEN_DATA_DIR` to select a different data directory.
@@ -78,10 +113,13 @@ Run each command block from the repository root. Set OPENAI_API_KEY in `warden-s
    Runs on port 5173 (`http://localhost:5173`) and talks to warden-api on
    port 8082 - CORS for that origin is already open in `CorsConfig.java`.
 
-6. Or skip the UI and import `Warden.postman_collection.json` - try
-   requests 1-4 (list users, User A vs User B on the same churn/discount
-   question, then a public FAQ question both should be able to answer),
-   plus request 7 to upload a document directly.
+6. Sign in at http://localhost:5173 as user-a (support rep) or user-b (manager).
+   Managers can publish documents. For Postman, import the collection from
+   warden-api. In a local Postman environment, set warden_username and
+   warden_password. Run Get CSRF token, then Sign in, then Get CSRF token again.
+   Keep Postman's cookie jar enabled. To switch roles,
+   sign out and repeat the sign-in sequence.
+
 
 ## Known gap (fixed 2026-09-25)
 
@@ -95,19 +133,17 @@ Fixed by switching to content-marker detection (`detect_access_level()`
 in `ingestion.py`) plus making the script idempotent
 (`delete_collection()` before repopulating), so re-running it never
 leaves stale, incorrectly-tagged chunks behind. Left here as a record of
-the bug, not a live warning - the current script and the `/ingest`
-endpoint both go through the same content-marker-driven correctness.
+the bug, not a live warning - bulk ingestion uses content markers. Manager-authenticated uploads use the publisher-selected access label.
 
 ## Known MVP simplifications
 
 - Two-tier access level (public / manager), not the fuller role+ACL
   layering discussed for later.
-- No real auth - `userId` in the request body (or the dropdown in the UI)
-  stands in for login, and the access level on an upload is
-  self-declared, not verified against who's actually uploading.
+- The demo uses two locally configured accounts and server-side sessions.
+  Manager accounts are trusted publishers and choose the document access label.
 - Document upload accepts `.txt` / `.md` only, up to 2 MB - no PDF/DOCX
   extraction yet.
-- Errors (Ollama down, retrieval service down, bad userId aside) surface
+- Provider and connectivity errors generally surface
   as plain 500s.
 
 ## Cleanup

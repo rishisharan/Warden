@@ -1,5 +1,8 @@
 package com.warden.service;
 
+import org.springframework.http.HttpStatus;
+import org.springframework.web.server.ResponseStatusException;
+
 import com.warden.domain.RetrievedChunk;
 import com.warden.guard.SecurityEvidence;
 import com.warden.domain.WardenUser;
@@ -37,6 +40,13 @@ public class QueryService {
             evidence.allowed = user.clearance().allowedLevelsUpToInclusive();
         }
         List<RetrievedChunk> authorized = retrievalService.retrieveAuthorized(question, user.clearance());
+        List<String> allowedLevels = user.clearance().allowedLevelsUpToInclusive();
+        for (RetrievedChunk chunk : authorized) {
+            if (chunk.accessLevel() == null || !allowedLevels.contains(chunk.accessLevel())) {
+                if (evidence != null) evidence.modelContextComplete = true;
+                throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "Invalid retrieval permissions");
+            }
+        }
         if (authorized.isEmpty()) {
             if (evidence != null) evidence.modelContextComplete = true;
             long totalDuration = System.currentTimeMillis() - totalStart;
