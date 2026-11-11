@@ -4,3 +4,6 @@ warden-search/.env
 warden-search/.env.*
 __pycache__/
 evaluation-dataset/legacy/retrieval_evidence_report.md
+/.venv/
+/warden-api/target/
+.env
