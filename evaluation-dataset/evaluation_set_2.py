@@ -59,6 +59,7 @@ import os
 import re
 import sys
 import time
+import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -295,7 +296,7 @@ def post_json(url: str, payload: dict[str, Any]) -> tuple[dict[str, Any], float]
     return response.json(), elapsed_ms
 
 
-def retrieve(case: EvalCase) -> tuple[list[dict[str, Any]], float]:
+def retrieve(case: EvalCase, *, strict=False) -> tuple[list[dict[str, Any]], float]:
     allowed = USER_ACCESS.get(case.user_id)
     if allowed is None:
         raise ValueError(
@@ -309,13 +310,26 @@ def retrieve(case: EvalCase) -> tuple[list[dict[str, Any]], float]:
         "topK": TOP_K,
     }
     data, latency = post_json(WARDEN_RETRIEVAL_URL, payload)
-    return data.get("results", []), latency
+    return (data["results"] if strict else data.get("results", [])), latency
 
 
-def ask_warden(case: EvalCase) -> tuple[dict[str, Any], float]:
+def ask_warden(case: EvalCase, *, query_url=WARDEN_QUERY_URL, evidence_dir=None) -> tuple[dict[str, Any], float]:
     start = time.perf_counter()
-    with authenticated_query(WARDEN_QUERY_URL, case.user_id, case.question, TIMEOUT_SECONDS) as response:
-        return json.load(response), (time.perf_counter() - start) * 1000
+    with authenticated_query(query_url, case.user_id, case.question, TIMEOUT_SECONDS) as response:
+        body = json.load(response)
+        trace = response.headers.get("X-Trace-Id")
+    if evidence_dir is not None:
+        if not trace or str(uuid.UUID(trace)) != trace:
+            raise ValueError("Invalid quality trace ID")
+        receipt = evidence_dir / (trace + ".json")
+        deadline = time.monotonic() + 2
+        while not receipt.is_file() and time.monotonic() < deadline:
+            time.sleep(.02)
+        evidence = json.loads(receipt.read_text(encoding="utf-8"))
+        if evidence.get("requestId") != trace:
+            raise ValueError("Quality receipt does not match the response")
+        body["_qualityEvidence"] = evidence
+    return body, (time.perf_counter() - start) * 1000
 
 
 # ---------------------------------------------------------------------------
@@ -735,13 +749,43 @@ def main(argv=None) -> int:
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--guard-evidence", type=Path, help="JSON containing independent policy and same-request evidence")
     mode.add_argument("--legacy-quality", action="store_true", help="Run original live quality evaluation; not a security certification")
+    mode.add_argument("--quality-v2", action="store_true", help="Run the corpus-backed live quality suite")
+    mode.add_argument("--grade-quality-v2", type=Path, help="Grade a recorded quality run without querying services")
+    mode.add_argument("--check-quality-v2", action="store_true", help="Validate cases and source references offline")
     mode.add_argument("--guard-live", type=Path, help="Synthetic test manifest for a running instrumented local target")
     parser.add_argument("--query-url", default=WARDEN_QUERY_URL)
     parser.add_argument("--evidence-dir", type=Path)
-    parser.add_argument("--report-dir", type=Path, default=Path(__file__).resolve().parent / "evaluation_results" / "guard")
+    parser.add_argument("--quality-observations", type=Path, help="Save raw synthetic observations and pending review material")
+    parser.add_argument("--semantic-review", type=Path, help="Criterion-level semantic review decisions")
+    parser.add_argument("--report-dir", type=Path)
+    parser.add_argument("--data-dir", type=Path, default=Path(os.getenv(
+        "WARDEN_DATA_DIR", Path(__file__).resolve().parents[1] / "data")))
     args = parser.parse_args(argv)
     if args.legacy_quality:
         return legacy_main()
+    report_root = Path(__file__).resolve().parent / "evaluation_results"
+    if args.quality_v2 or args.check_quality_v2 or args.grade_quality_v2:
+        from quality_set_2 import run
+
+        if args.quality_v2:
+            required_env = ("WARDEN_RETRIEVAL_SERVICE_TOKEN", "WARDEN_EVAL_REP_PASSWORD",
+                            "WARDEN_EVAL_MANAGER_PASSWORD")
+            missing = [name for name in required_env if not os.getenv(name)]
+            if missing:
+                parser.error("configure " + ", ".join(missing))
+        return run(
+            args.data_dir, args.report_dir or report_root / "quality_set_2",
+            check_only=args.check_quality_v2, user_access=USER_ACCESS, normalize=normalize,
+            exact_refusal=EXACT_REFUSAL, top_k=TOP_K,
+            observations_path=args.quality_observations, grade_path=args.grade_quality_v2,
+            review_path=args.semantic_review,
+            retrieve=lambda case: retrieve(EvalCase(
+                case["id"], case["category"], case["user"], case["question"]), strict=True)[0],
+            query=lambda case: ask_warden(EvalCase(
+                case["id"], case["category"], case["user"], case["question"]),
+                query_url=args.query_url, evidence_dir=args.evidence_dir)[0],
+        )
+    args.report_dir = args.report_dir or report_root / "guard"
     if args.guard_live:
         if args.evidence_dir is None:
             parser.error("--guard-live requires --evidence-dir")

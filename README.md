@@ -86,6 +86,8 @@ Run from the repository root. Configure the demo password hashes and retrieval s
    sign out and repeat the sign-in sequence.
 
 
+See [Evaluation Set 2](evaluation-dataset/EVALUATION_SET_2.md) for evaluation setup, cases, and metrics.
+
 ## Known gap (fixed 2026-09-25)
 
 `ingestion.py` originally tagged access level from a hand-maintained

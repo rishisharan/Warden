@@ -51,6 +51,32 @@ public class SecurityConfig {
         List<UserDetails> accounts = new ArrayList<>();
         if (!repHash.isBlank()) accounts.add(User.withUsername("user-a").password(repHash).roles("SUPPORT_REP").build());
         if (!managerHash.isBlank()) accounts.add(User.withUsername("user-b").password(managerHash).roles("MANAGER").build());
-        return new InMemoryUserDetailsManager(accounts);
+        // Keep account changes and per-request reads visible across request threads.
+        return new InMemoryUserDetailsManager(accounts) {
+            @Override
+            public synchronized UserDetails loadUserByUsername(String username) {
+                return super.loadUserByUsername(username);
+            }
+
+            @Override
+            public synchronized void createUser(UserDetails user) {
+                super.createUser(user);
+            }
+
+            @Override
+            public synchronized void updateUser(UserDetails user) {
+                super.updateUser(user);
+            }
+
+            @Override
+            public synchronized void deleteUser(String username) {
+                super.deleteUser(username);
+            }
+
+            @Override
+            public synchronized boolean userExists(String username) {
+                return super.userExists(username);
+            }
+        };
     }
 }

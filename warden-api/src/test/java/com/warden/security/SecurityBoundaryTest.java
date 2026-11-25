@@ -18,12 +18,18 @@ import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.http.MediaType;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.mock.web.MockHttpSession;
+import org.springframework.security.core.userdetails.User;
+import org.springframework.security.provisioning.InMemoryUserDetailsManager;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.ResultActions;
 
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -41,6 +47,7 @@ class SecurityBoundaryTest {
 
     @Autowired MockMvc mvc;
     @Autowired ObjectMapper json;
+    @Autowired InMemoryUserDetailsManager accounts;
     @MockBean RetrievalService retrieval;
     @MockBean OllamaChatService ollama;
 
@@ -117,6 +124,57 @@ class SecurityBoundaryTest {
                 .param("accessLevel", "manager"))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.chunksStored").value(1));
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void activeManagerSessionLosesRetrievalAccessImmediately(boolean staleCacheResponse) throws Exception {
+        var originalAccount = accounts.loadUserByUsername("user-b");
+        var managerChunk = new RetrievedChunk("restricted", "manager-only.md", "policy_docs",
+                "manager", "MANAGER_CACHE_SENTINEL", 0.1);
+        List<RetrievedChunk> warmedResults = List.of(managerChunk);
+        when(retrieval.retrieveAuthorized(QUESTION, AccessLevel.MANAGER)).thenReturn(warmedResults);
+        when(retrieval.retrieveAuthorized(QUESTION, AccessLevel.PUBLIC))
+                .thenReturn(staleCacheResponse ? warmedResults : List.of(PUBLIC));
+        when(ollama.answer(QUESTION, warmedResults)).thenReturn("MANAGER_CACHE_SENTINEL");
+        when(ollama.answer(QUESTION, List.of(PUBLIC))).thenReturn("public answer");
+
+        MockHttpSession session = login("user-b");
+        performQuery(session)
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.clearance").value("MANAGER"))
+                .andExpect(jsonPath("$.citedSources[0].sourceFile").value("manager-only.md"))
+                .andExpect(jsonPath("$.answer").value("MANAGER_CACHE_SENTINEL"));
+
+        try {
+            accounts.updateUser(User.withUserDetails(originalAccount).roles("SUPPORT_REP").build());
+            var next = performQuery(session);
+            if (staleCacheResponse) {
+                next.andExpect(status().isBadGateway())
+                        .andExpect(jsonPath("$.answer").doesNotExist())
+                        .andExpect(jsonPath("$.citedSources").doesNotExist());
+            } else {
+                next.andExpect(status().isOk())
+                        .andExpect(jsonPath("$.clearance").value("PUBLIC"))
+                        .andExpect(jsonPath("$.answer").value("public answer"))
+                        .andExpect(jsonPath("$.citedSources.length()").value(1))
+                        .andExpect(jsonPath("$.citedSources[0].accessLevel").value("public"));
+                verify(ollama).answer(QUESTION, List.of(PUBLIC));
+            }
+            verify(retrieval).retrieveAuthorized(QUESTION, AccessLevel.MANAGER);
+            verify(retrieval).retrieveAuthorized(QUESTION, AccessLevel.PUBLIC);
+            verify(ollama).answer(QUESTION, warmedResults);
+            verify(ollama, times(staleCacheResponse ? 1 : 2)).answer(eq(QUESTION), anyList());
+            verifyNoMoreInteractions(retrieval);
+        } finally {
+            accounts.updateUser(originalAccount);
+        }
+    }
+
+    private ResultActions performQuery(MockHttpSession session)
+            throws Exception {
+        return mvc.perform(post("/api/query").session(session).header("X-CSRF-TOKEN", csrf(session))
+                .contentType(MediaType.APPLICATION_JSON).content(queryBody("user-b")));
     }
 
     private MockHttpSession login(String username) throws Exception {
