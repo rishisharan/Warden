@@ -11,6 +11,7 @@ import java.util.concurrent.*;
 import org.junit.jupiter.api.*;
 import org.junit.jupiter.api.io.TempDir;
 import org.springframework.mock.web.*;
+import org.springframework.security.core.userdetails.User;
 import static org.junit.jupiter.api.Assertions.*;
 
 class GuardInstrumentationTest {
@@ -54,7 +55,10 @@ class GuardInstrumentationTest {
 
     Map<?, ?> query(String user, boolean enabled, boolean rejected) throws Exception {
         String base = "http://127.0.0.1:" + server.getAddress().getPort();
-        QueryService service = new QueryService(new UserService(), new RetrievalService(base, 2, "test-service-token"), new OllamaChatService(base, "synthetic"));
+        UserService users = new UserService(username -> User.withUsername(username).password("unused")
+                .roles("user-b".equals(username) ? "MANAGER" : "SUPPORT_REP").build());
+        QueryService service = new QueryService(users, new RetrievalService(base, 2, "test-service-token"),
+                new OllamaChatService(base, "synthetic"));
         TraceIdFilter filter = new TraceIdFilter(new EvidenceWriter(enabled, directory.toString(), mapper));
         MockHttpServletRequest request = new MockHttpServletRequest("POST", "/api/query");
         MockHttpServletResponse response = new MockHttpServletResponse();

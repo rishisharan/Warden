@@ -1,0 +1,8 @@
+{
+  "documents": 30,
+  "topK": 5,
+  "applicationTopK": 1,
+  "embedding": "nomic-embed-text",
+  "generation": "llama3.2",
+  "corpus": "isolated evaluation references"
+}

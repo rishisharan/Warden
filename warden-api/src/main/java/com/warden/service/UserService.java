@@ -2,33 +2,39 @@ package com.warden.service;
 
 import com.warden.domain.AccessLevel;
 import com.warden.domain.WardenUser;
-import java.util.List;
 import java.util.Map;
+import org.springframework.security.core.userdetails.UserDetails;
+import org.springframework.security.core.userdetails.UserDetailsService;
+import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.stereotype.Service;
 
-/**
- * Stands in for a real login/identity system. Two fake users: a support
- * rep with PUBLIC-only clearance, and a manager with MANAGER clearance
- * (which also covers PUBLIC, per AccessLevel#allowedLevelsUpToInclusive).
- */
+/** Resolves query clearance from the current account, even for an existing session. */
 @Service
 public class UserService {
 
-    private final Map<String, WardenUser> users = Map.of(
-            "user-a", new WardenUser("user-a", "Jamie Alvarez", "support-rep", AccessLevel.PUBLIC),
-            "user-b", new WardenUser("user-b", "Morgan Chen", "manager", AccessLevel.MANAGER)
-    );
+    private static final Map<String, String> DISPLAY_NAMES = Map.of(
+            "user-a", "Jamie Alvarez", "user-b", "Morgan Chen");
 
-    public WardenUser require(String userId) {
-        WardenUser user = users.get(userId);
-        if (user == null) {
-            throw new NoSuchUserException(userId);
-        }
-        return user;
+    private final UserDetailsService accounts;
+
+    public UserService(UserDetailsService accounts) {
+        this.accounts = accounts;
     }
 
-    public List<WardenUser> listAll() {
-        return List.copyOf(users.values());
+    public WardenUser require(String userId) {
+        UserDetails account;
+        try {
+            account = accounts.loadUserByUsername(userId);
+        } catch (UsernameNotFoundException ignored) {
+            throw new NoSuchUserException(userId);
+        }
+        if (!account.isEnabled() || !account.isAccountNonLocked() || !account.isAccountNonExpired()) {
+            throw new NoSuchUserException(userId);
+        }
+        boolean manager = account.getAuthorities().stream()
+                .anyMatch(authority -> "ROLE_MANAGER".equals(authority.getAuthority()));
+        return new WardenUser(userId, DISPLAY_NAMES.getOrDefault(userId, userId),
+                manager ? "manager" : "support-rep", manager ? AccessLevel.MANAGER : AccessLevel.PUBLIC);
     }
 
     public static class NoSuchUserException extends RuntimeException {
